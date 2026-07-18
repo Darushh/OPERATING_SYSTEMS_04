@@ -166,7 +166,24 @@ static MallocMetadata* allocateBlock(size_t size)
     return newBlock;
 }
 
-//here we want to add splitting blocks by size - as requested
+//spliting for already allocated:
+void split_allocated_block(MallocMetadata* block, int current_order, int target_order) {
+    while (current_order > target_order) {
+        size_t block_size = 128 << current_order;
+        size_t half_size = block_size / 2;
+        block->size = half_size;
+        char* buddy_address = reinterpret_cast<char*>(block) + half_size;
+        MallocMetadata* buddy = reinterpret_cast<MallocMetadata*>(buddy_address);
+        buddy->size = half_size;
+        buddy->is_free = true;
+        buddy->is_mmaped = false;
+        insert_into_free_list(buddy, current_order - 1);
+        current_order--;
+    }
+}
+
+
+//here we want to add splitting blocks by size - as requested (free block)
 MallocMetadata* split_block(MallocMetadata* block, int current_order, int target_order) {
     while (current_order > target_order) {
        //removing the block from current order
@@ -369,7 +386,7 @@ size_t _num_allocated_blocks()
     if (!is_initialized) return 0;
     size_t count = 0;
     char* current = static_cast<char*>(heap_start);
-    char* heap_end = current + (32 * 128 * 1024); 
+    char* heap_end = current + 32 * 128 * 1024; 
     while (current < heap_end) {
         MallocMetadata* block = reinterpret_cast<MallocMetadata*>(current);
         count++;
@@ -388,7 +405,7 @@ size_t _num_allocated_bytes()
     if (!is_initialized) return 0;
     size_t allocated_bytes = 0;
     char* current = static_cast<char*>(heap_start);
-    char* heap_end = current + (32 * 128 * 1024);
+    char* heap_end = current + 32 * 128 * 1024;
     while (current < heap_end) {
         MallocMetadata* block = reinterpret_cast<MallocMetadata*>(current);
         allocated_bytes += (block->size - sizeof(MallocMetadata));
@@ -402,13 +419,7 @@ size_t _num_allocated_bytes()
     return allocated_bytes;
 }
 
-size_t _num_meta_data_bytes()
-{
-    return _num_allocated_blocks() * sizeof(MallocMetadata);
-}
+size_t _num_meta_data_bytes(){ return _num_allocated_blocks() * sizeof(MallocMetadata);}
 
 
-size_t _size_meta_data()
-{
-    return sizeof(MallocMetadata);
-}
+size_t _size_meta_data(){  return sizeof(MallocMetadata);}
