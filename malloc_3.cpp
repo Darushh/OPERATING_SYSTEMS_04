@@ -4,10 +4,12 @@
 #include <cstdint>
 
 #define INITIAL_BLOCKS 32
-#define MAX_ORDER_SIZE (128 * 1024) // 128KB
-#define ALLOCATION_SIZE (INITIAL_BLOCKS * MAX_ORDER_SIZE) // 4MB
+#define MAX_ORDER_SIZE (128 * 1024) //128KB
+#define ALLOCATION_SIZE (INITIAL_BLOCKS * MAX_ORDER_SIZE) //4MB
 #define MAX_ORDER 10
 #define MIN_ORDER_SIZE 128
+#define MMAP_THRESHOLD (128 * 1024) //128KB
+
 struct MallocMetadata {
     size_t size;    //size of block including METADATA
     bool is_free;   //if block is free or not
@@ -25,6 +27,7 @@ static constexpr size_t MAX_MALLOC = 100000000;
 //free_lists[i] has free blocks of order i
 extern MallocMetadata* free_lists[11];
 
+MallocMetadata* mmap_head = nullptr; //head for mmap blocks
 void* heap_start = nullptr; //global variable for the start of heap (aligned so we can use XOR)
 bool is_initialized = false; //first time calling malloc - need to initialize buddy
 
@@ -65,9 +68,6 @@ void initialize_buddy_allocator() {
     }
 
 }
-
-
-
 
 //function for data aligment
 size_t align_8(size_t size) {
@@ -199,34 +199,87 @@ MallocMetadata* split_block(MallocMetadata* block, int current_order, int target
 void* smalloc(size_t size)
 {
     if (size == 0 || size > MAX_MALLOC) { return nullptr; }
-    MallocMetadata* metadata = findFreeBlock(size);
-
-    if (metadata != nullptr) {
-        metadata->is_free = false;
-        return static_cast<void*>(metadata + 1);
+    //if first time call - initialize
+    if (!is_initialized) {
+        initialize_buddy_allocator();
+        is_initialized = true;
     }
-
-    metadata = allocateBlock(size);
-
-    if (metadata == nullptr) {
-        return nullptr;
+    size_t aligned_size = align_8(size);
+    size_t total_size = aligned_size + sizeof(MallocMetadata);
+    
+    if (total_size > MMAP_THRESHOLD) {
+        //memory from OS:
+        void* raw_address = mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+        if (raw_address == MAP_FAILED) {
+            return nullptr;
+        }
+        MallocMetadata* block = static_cast<MallocMetadata*>(raw_address);
+        block->size = aligned_size; 
+        block->is_free = false;
+        block->is_mmaped = true;
+        //inserting to mmap block list
+        block->next = mmap_head;
+        block->prev = nullptr;
+        if (mmap_head != nullptr) {
+            mmap_head->prev = block;
+        }
+        mmap_head = block;
+        return static_cast<void*>(block + 1);
     }
-    return static_cast<void*>(metadata + 1);
+    int target_order = get_order(total_size);
+    int found_order = -1;
+    for (int o = target_order; o <= 10; ++o) {
+        if (free_lists[o] != nullptr) {
+            found_order = o;
+            break;
+        }
+    }
+    if (found_order == -1) { return nullptr;} //no available blocks
+    MallocMetadata* block = free_lists[found_order];
+    if (found_order > target_order) { //spliting if needed
+        block = split_block(block, found_order, target_order);
+    } else {
+        remove_from_free_list(block, target_order);
+        block->is_free = false;
+    }
+    return static_cast<void*>(block + 1);
 }
 
 void sfree(void* p)
 {
-    if (p == nullptr) {
-        return;
-    }
-
+    if (p == nullptr) return;
     MallocMetadata* metadata = static_cast<MallocMetadata*>(p) - 1;
-
-    if (metadata->is_free) {
+    if (metadata->is_free)  return; //already free
+    //if allocated with mmap;
+    if (metadata->is_mmaped) {
+        if (metadata->prev != nullptr) {
+            metadata->prev->next = metadata->next;
+        } else {
+            mmap_head = metadata->next;
+        }
+        if (metadata->next != nullptr) {
+            metadata->next->prev = metadata->prev;
+        }
+        munmap(metadata, metadata->size + sizeof(MallocMetadata));
         return;
     }
-
+    //merging:
     metadata->is_free = true;
+    int order = get_order(metadata->size);
+    MallocMetadata* curr = metadata;
+    while (order < MAX_ORDER) { //merging until possible
+        uintptr_t curr_addr = reinterpret_cast<uintptr_t>(curr);
+        uintptr_t buddy_addr = curr_addr ^ curr->size;
+        MallocMetadata* buddy = reinterpret_cast<MallocMetadata*>(buddy_addr);
+        //conditions for merging:
+        if (buddy->is_free && buddy->size == curr->size && !buddy->is_mmaped) {
+            remove_from_free_list(buddy, order);
+            if (buddy < curr) {curr = buddy;}
+            curr->size *= 2;
+            order++;
+        } else { break;}
+    }
+    insert_into_free_list(curr, order);
 }
 
 
