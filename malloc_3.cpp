@@ -166,7 +166,7 @@ static MallocMetadata* allocateBlock(size_t size)
     return newBlock;
 }
 
-//spliting for already allocated:
+//spliting for already allocated
 void split_allocated_block(MallocMetadata* block, int current_order, int target_order) {
     while (current_order > target_order) {
         size_t block_size = 128 << current_order;
@@ -302,21 +302,13 @@ void sfree(void* p)
 
 void* scalloc(size_t num, size_t size)
 {
-    if (num == 0 || size == 0) {
-        return nullptr;
-    }
+    if (num == 0 || size == 0) return nullptr;
 
-    if (num > MAX_MALLOC / size) {
-        return nullptr;
-    }
-
+    if (num > MAX_MALLOC / size) return nullptr;
     size_t totalSize = num * size;
-
     void* ptr = smalloc(totalSize);
 
-    if (ptr == nullptr) {
-        return nullptr;
-    }
+    if (ptr == nullptr)  return nullptr;
 
     std::memset(ptr, 0, totalSize);
 
@@ -326,31 +318,83 @@ void* scalloc(size_t num, size_t size)
 
 void* srealloc(void* oldp, size_t size)
 {
-    if (size == 0 || size > MAX_MALLOC) {
-        return nullptr;
+    if (size == 0 || size > MAX_MALLOC) return nullptr;
+    if (oldp == nullptr) return smalloc(size);
+    MallocMetadata* oldMetadata = static_cast<MallocMetadata*>(oldp) - 1;
+    size_t aligned_size = align8(size);
+    size_t total_size = aligned_size + sizeof(MallocMetadata);
+    //handle mmap
+    if (oldMetadata->is_mmaped) {
+        if (aligned_size == oldMetadata->size) {
+            return oldp;
+        }
+        void* newPtr = smalloc(size);
+        if (newPtr == nullptr) {
+            return nullptr;
+        }
+        std::memcpy(newPtr, oldp, oldMetadata->size);
+        sfree(oldp);
+        return newPtr;
     }
-
-    if (oldp == nullptr) {
-        return smalloc(size);
-    }
-
-    MallocMetadata* oldMetadata =
-        static_cast<MallocMetadata*>(oldp) - 1;
-
-    if (size <= oldMetadata->size) {
+    //handle buddies:
+    int target_order = get_order(total_size);
+    int old_order = get_order(oldMetadata->size);
+    //block is big enough
+    if (old_order >= target_order) {
+        split_allocated_block(oldMetadata, old_order, target_order);
         return oldp;
     }
-
+    //maybe merging
+    int order = old_order;
+    MallocMetadata* curr = oldMetadata;
+    bool can_merge = false;
+    while (order < target_order) {
+        uintptr_t curr_addr = reinterpret_cast<uintptr_t>(curr);
+        uintptr_t buddy_addr = curr_addr ^ (128 << order);
+        MallocMetadata* buddy = reinterpret_cast<MallocMetadata*>(buddy_addr);
+        if (buddy->is_free && buddy->size == (128 << order) && !buddy->is_mmaped) {
+            if (buddy < curr) {
+                curr = buddy;
+            }
+            order++;
+            if (order >= target_order) {
+                can_merge = true;
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    if (can_merge) {
+        order = old_order;
+        curr = oldMetadata;
+        while (order < target_order) {
+            uintptr_t curr_addr = reinterpret_cast<uintptr_t>(curr);
+            uintptr_t buddy_addr = curr_addr ^ (128 << order);
+            MallocMetadata* buddy = reinterpret_cast<MallocMetadata*>(buddy_addr);
+            remove_from_free_list(buddy, order);
+            if (buddy < curr) {
+                curr = buddy;
+            }
+            curr->size *= 2;
+            order++;
+        }
+        curr->is_free = false;
+        //moving data if needed
+        if (curr != oldMetadata) {
+            std::memmove(static_cast<void*>(curr + 1), oldp, (128 << old_order) - sizeof(MallocMetadata));
+        }
+        //spliting if too big
+        split_allocated_block(curr, order, target_order);
+        return static_cast<void*>(curr + 1);
+    }
+    //new allocation - copy
     void* newPtr = smalloc(size);
-
     if (newPtr == nullptr) {
         return nullptr;
     }
-
-    std::memmove(newPtr, oldp, oldMetadata->size);
-
+    std::memcpy(newPtr, oldp, oldMetadata->size - sizeof(MallocMetadata));
     sfree(oldp);
-
     return newPtr;
 }
 
