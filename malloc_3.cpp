@@ -366,31 +366,41 @@ size_t _num_free_bytes()
 
 size_t _num_allocated_blocks()
 {
+    if (!is_initialized) return 0;
     size_t count = 0;
-    MallocMetadata* current = head;
-
-    while (current != nullptr) {
+    char* current = static_cast<char*>(heap_start);
+    char* heap_end = current + (32 * 128 * 1024); 
+    while (current < heap_end) {
+        MallocMetadata* block = reinterpret_cast<MallocMetadata*>(current);
         count++;
-        current = current->next;
+        current += block->size; 
     }
-
+    //check mmap blocks:
+    MallocMetadata* mmap_current = mmap_head;
+    while (mmap_current != nullptr) {
+        count++;
+        mmap_current = mmap_current->next;
+    }
     return count;
 }
-
-
 size_t _num_allocated_bytes()
 {
-    size_t totalAllocatedBytes = 0;
-    MallocMetadata* current = head;
-
-    while (current != nullptr) {
-        totalAllocatedBytes += current->size;
-        current = current->next;
+    if (!is_initialized) return 0;
+    size_t allocated_bytes = 0;
+    char* current = static_cast<char*>(heap_start);
+    char* heap_end = current + (32 * 128 * 1024);
+    while (current < heap_end) {
+        MallocMetadata* block = reinterpret_cast<MallocMetadata*>(current);
+        allocated_bytes += (block->size - sizeof(MallocMetadata));
+        current += block->size;
     }
-
-    return totalAllocatedBytes;
+    MallocMetadata* mmap_current = mmap_head;
+    while (mmap_current != nullptr) {
+        allocated_bytes += mmap_current->size;
+        mmap_current = mmap_current->next;
+    }
+    return allocated_bytes;
 }
-
 
 size_t _num_meta_data_bytes()
 {
