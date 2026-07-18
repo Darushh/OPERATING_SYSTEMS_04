@@ -23,9 +23,11 @@ static MallocMetadata* tail = nullptr;
 
 static constexpr size_t MAX_MALLOC = 100000000;
 
+#include <sys/mman.h>
+
 //array of doubly linked lists of free blocks sorted by address
 //free_lists[i] has free blocks of order i
-extern MallocMetadata* free_lists[11];
+MallocMetadata* free_lists[11] = { nullptr };
 
 MallocMetadata* mmap_head = nullptr; //head for mmap blocks
 void* heap_start = nullptr; //global variable for the start of heap (aligned so we can use XOR)
@@ -321,7 +323,7 @@ void* srealloc(void* oldp, size_t size)
     if (size == 0 || size > MAX_MALLOC) return nullptr;
     if (oldp == nullptr) return smalloc(size);
     MallocMetadata* oldMetadata = static_cast<MallocMetadata*>(oldp) - 1;
-    size_t aligned_size = align8(size);
+    size_t aligned_size = align_8(size);
     size_t total_size = aligned_size + sizeof(MallocMetadata);
     //handle mmap
     if (oldMetadata->is_mmaped) {
