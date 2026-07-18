@@ -167,7 +167,33 @@ static MallocMetadata* allocateBlock(size_t size)
 }
 
 //here we want to add splitting blocks by size - as requested
-
+MallocMetadata* split_block(MallocMetadata* block, int current_order, int target_order) {
+    while (current_order > target_order) {
+       //removing the block from current order
+        remove_from_free_list(block, current_order);
+        //calculating half (spliting):
+        size_t block_size = 128 << current_order;
+        size_t half_size = block_size / 2;
+        //same address, size changes
+        block->size = half_size;
+        //second half - need to change address
+        char* buddy_address = reinterpret_cast<char*>(block) + half_size;
+        MallocMetadata* split_block = reinterpret_cast<MallocMetadata*>(buddy_address);
+        split_block->size = half_size;
+        split_block->is_free = true;
+        split_block->is_mmaped = false;
+        //entering to new order
+        insert_into_free_list(split_block, current_order - 1);
+        insert_into_free_list(block, current_order - 1);
+        //repeating until getting to desired order
+        current_order--;
+    }
+    
+    // סיימנו לפצל, נסיר את הבלוק הסופי מהרשימה החופשית שלו כי הוא הולך להיות מוקצה
+    remove_from_free_list(block, target_order);
+    block->is_free = false;
+    return block;
+}
 
 
 void* smalloc(size_t size)
