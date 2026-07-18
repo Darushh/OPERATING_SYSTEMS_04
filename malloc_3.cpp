@@ -85,6 +85,51 @@ int get_order(size_t total_size) {
     return order;
 }
 
+//removing block from list:
+void remove_from_free_list(MallocMetadata* block, int order) {
+    if (free_lists[order] == block) {
+        free_lists[order] = block->next;
+    }
+    if (block->prev != nullptr) {
+        block->prev->next = block->next;
+    }
+    if (block->next != nullptr) {
+        block->next->prev = block->prev;
+    }
+    block->next = nullptr;
+    block->prev = nullptr;
+}
+
+//adding block to list:
+void insert_into_free_list(MallocMetadata* block, int order) {
+    block->is_free = true;
+    block->next = nullptr;
+    block->prev = nullptr;
+    //if list is empty:
+    if (free_lists[order] == nullptr) {
+        free_lists[order] = block;
+        return;
+    }
+    //block needs to be first in list (lowest address)
+    if (block < free_lists[order]) {
+        block->next = free_lists[order];
+        free_lists[order]->prev = block;
+        free_lists[order] = block;
+        return;
+    }
+    //insert the block sorted!!
+    MallocMetadata* curr = free_lists[order];
+    while (curr->next != nullptr && curr->next < block) {
+        curr = curr->next;
+    }
+    block->next = curr->next;
+    block->prev = curr;
+    if (curr->next != nullptr) {
+        curr->next->prev = block;
+    }
+    curr->next = block;
+}
+
 // internal function to find a free block of memory that is large enough to satisfy the requested size.
 static MallocMetadata* findFreeBlock(size_t size)
 {
