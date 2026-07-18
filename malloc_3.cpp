@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstring>
 #include <cstdint>
+#include <sys/mman.h>
 
 #define INITIAL_BLOCKS 32
 #define MAX_ORDER_SIZE (128 * 1024) //128KB
@@ -23,7 +24,6 @@ static MallocMetadata* tail = nullptr;
 
 static constexpr size_t MAX_MALLOC = 100000000;
 
-#include <sys/mman.h>
 
 //array of doubly linked lists of free blocks sorted by address
 //free_lists[i] has free blocks of order i
@@ -208,7 +208,7 @@ MallocMetadata* split_block(MallocMetadata* block, int current_order, int target
         current_order--;
     }
     
-    // סיימנו לפצל, נסיר את הבלוק הסופי מהרשימה החופשית שלו כי הוא הולך להיות מוקצה
+    //remove from free list
     remove_from_free_list(block, target_order);
     block->is_free = false;
     return block;
