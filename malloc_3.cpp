@@ -19,8 +19,6 @@ struct MallocMetadata {
     MallocMetadata* prev;
 };
 
-static MallocMetadata* head = nullptr;
-static MallocMetadata* tail = nullptr;
 
 static constexpr size_t MAX_MALLOC = 100000000;
 
@@ -132,41 +130,6 @@ void insert_into_free_list(MallocMetadata* block, int order) {
     curr->next = block;
 }
 
-// internal function to find a free block of memory that is large enough to satisfy the requested size.
-static MallocMetadata* findFreeBlock(size_t size)
-{
-    MallocMetadata* current = head;
-    while (current != nullptr) {
-        if (current->is_free && current->size >= size) {
-            return current;
-        }
-        current = current->next;
-    }
-    return nullptr;
-}
-
-// internal function to allocate a new block of memory and add it to the linked list of blocks.
-static MallocMetadata* allocateBlock(size_t size)
-{
-    size_t totalSize = sizeof(MallocMetadata) + size;
-    void* rawAddress = sbrk(static_cast<intptr_t>(totalSize));
-    if (rawAddress == reinterpret_cast<void*>(-1))  return nullptr;
-    MallocMetadata* newBlock = static_cast<MallocMetadata*>(rawAddress);
-
-    newBlock->size = size;
-    newBlock->is_free = false;
-    newBlock->next = nullptr;
-    newBlock->prev = tail;
-
-    if (tail != nullptr) {
-        tail->next = newBlock;
-    } else {
-        head = newBlock;
-    }
-
-    tail = newBlock;
-    return newBlock;
-}
 
 //spliting for already allocated
 void split_allocated_block(MallocMetadata* block, int current_order, int target_order) {
