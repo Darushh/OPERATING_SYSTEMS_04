@@ -341,33 +341,25 @@ void* srealloc(void* oldp, size_t size)
 size_t _num_free_blocks()
 {
     size_t count = 0;
-    MallocMetadata* current = head;
-
-    while (current != nullptr) {
-        if (current->is_free) {
+    for (int i = 0; i <= MAX_ORDER; ++i) {
+        MallocMetadata* current = free_lists[i];
+        while (current != nullptr) {
             count++;
+            current = current->next;
         }
-
-        current = current->next;
     }
-
     return count;
 }
-
-
 size_t _num_free_bytes()
 {
     size_t totalFreeBytes = 0;
-    MallocMetadata* current = head;
-
-    while (current != nullptr) {
-        if (current->is_free) {
-            totalFreeBytes += current->size;
+    for (int i = 0; i <= MAX_ORDER; ++i) {
+        MallocMetadata* current = free_lists[i];
+        while (current != nullptr) {
+            totalFreeBytes += (current->size - sizeof(MallocMetadata));
+            current = current->next;
         }
-
-        current = current->next;
     }
-
     return totalFreeBytes;
 }
 
