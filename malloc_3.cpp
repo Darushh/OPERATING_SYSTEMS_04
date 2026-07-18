@@ -25,7 +25,7 @@ static MallocMetadata* tail = nullptr;
 static constexpr size_t MAX_MALLOC = 100000000;
 
 
-//array of doubly linked lists of free blocks sorted by address
+//array of double linked lists of free blocks sorted by address
 //free_lists[i] has free blocks of order i
 MallocMetadata* free_lists[11] = { nullptr };
 
@@ -208,7 +208,7 @@ MallocMetadata* split_block(MallocMetadata* block, int current_order, int target
         current_order--;
     }
     
-    //remove from free list
+    //removing from free list
     remove_from_free_list(block, target_order);
     block->is_free = false;
     return block;
