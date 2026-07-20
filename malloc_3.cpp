@@ -31,19 +31,21 @@ MallocMetadata* mmap_head = nullptr; //head for mmap blocks
 void* heap_start = nullptr; //global variable for the start of heap (aligned so we can use XOR)
 bool is_initialized = false; //first time calling malloc - need to initialize buddy
 
-void initialize_buddy_allocator() {
+bool initialize_buddy_allocator() {
     void* current_break = sbrk(0);
-    if (current_break == (void*)-1) return; 
+    if (current_break == (void*)-1) return false;
     uintptr_t addr = reinterpret_cast<uintptr_t>(current_break);
     uintptr_t alignment = ALLOCATION_SIZE; // 4MB
     //check how much for aligment:
     uintptr_t offset = 0;
     if (addr % alignment != 0) offset = alignment - (addr % alignment);
     //allign:
-    if (offset > 0) sbrk(offset);
+    if (offset > 0) {
+        if (sbrk(offset) == (void*)-1) return false;
+    }
    //second call to sbrk for buddy_allocator
     heap_start = sbrk(ALLOCATION_SIZE);
-    if (heap_start == (void*)-1) return; 
+    if (heap_start == (void*)-1) return false;
 
     //initializing blocks (MAX size at first):
     MallocMetadata* prev_block = nullptr;
@@ -67,6 +69,7 @@ void initialize_buddy_allocator() {
         prev_block = current_block;
     }
 
+    return true;
 }
 
 //function for data aligment
@@ -134,7 +137,7 @@ void insert_into_free_list(MallocMetadata* block, int order) {
 //spliting for already allocated
 void split_allocated_block(MallocMetadata* block, int current_order, int target_order) {
     while (current_order > target_order) {
-        size_t block_size = 128 << current_order;
+        size_t block_size = static_cast<size_t>(MIN_ORDER_SIZE) << current_order;
         size_t half_size = block_size / 2;
         block->size = half_size;
         char* buddy_address = reinterpret_cast<char*>(block) + half_size;
@@ -154,18 +157,18 @@ MallocMetadata* split_block(MallocMetadata* block, int current_order, int target
        //removing the block from current order
         remove_from_free_list(block, current_order);
         //calculating half (spliting):
-        size_t block_size = 128 << current_order;
+        size_t block_size = static_cast<size_t>(MIN_ORDER_SIZE) << current_order;
         size_t half_size = block_size / 2;
         //same address, size changes
         block->size = half_size;
         //second half - need to change address
         char* buddy_address = reinterpret_cast<char*>(block) + half_size;
-        MallocMetadata* split_block = reinterpret_cast<MallocMetadata*>(buddy_address);
-        split_block->size = half_size;
-        split_block->is_free = true;
-        split_block->is_mmaped = false;
+        MallocMetadata* buddy_block = reinterpret_cast<MallocMetadata*>(buddy_address);
+        buddy_block->size = half_size;
+        buddy_block->is_free = true;
+        buddy_block->is_mmaped = false;
         //entering to new order
-        insert_into_free_list(split_block, current_order - 1);
+        insert_into_free_list(buddy_block, current_order - 1);
         insert_into_free_list(block, current_order - 1);
         //repeating until getting to desired order
         current_order--;
@@ -183,7 +186,9 @@ void* smalloc(size_t size)
     if (size == 0 || size > MAX_MALLOC) { return nullptr; }
     //if first time call - initialize
     if (!is_initialized) {
-        initialize_buddy_allocator();
+        if (!initialize_buddy_allocator()) {
+            return nullptr;
+        }
         is_initialized = true;
     }
     size_t aligned_size = align_8(size);
@@ -297,7 +302,8 @@ void* srealloc(void* oldp, size_t size)
         if (newPtr == nullptr) {
             return nullptr;
         }
-        std::memcpy(newPtr, oldp, oldMetadata->size);
+        size_t copy_size = oldMetadata->size < aligned_size ? oldMetadata->size : aligned_size;
+        std::memmove(newPtr, oldp, copy_size);
         sfree(oldp);
         return newPtr;
     }
@@ -315,9 +321,9 @@ void* srealloc(void* oldp, size_t size)
     bool can_merge = false;
     while (order < target_order) {
         uintptr_t curr_addr = reinterpret_cast<uintptr_t>(curr);
-        uintptr_t buddy_addr = curr_addr ^ (128 << order);
+        uintptr_t buddy_addr = curr_addr ^ (static_cast<size_t>(MIN_ORDER_SIZE) << order);
         MallocMetadata* buddy = reinterpret_cast<MallocMetadata*>(buddy_addr);
-        if (buddy->is_free && buddy->size == (128 << order) && !buddy->is_mmaped) {
+        if (buddy->is_free && buddy->size == (static_cast<size_t>(MIN_ORDER_SIZE) << order) && !buddy->is_mmaped) {
             if (buddy < curr) {
                 curr = buddy;
             }
@@ -335,7 +341,7 @@ void* srealloc(void* oldp, size_t size)
         curr = oldMetadata;
         while (order < target_order) {
             uintptr_t curr_addr = reinterpret_cast<uintptr_t>(curr);
-            uintptr_t buddy_addr = curr_addr ^ (128 << order);
+            uintptr_t buddy_addr = curr_addr ^ (static_cast<size_t>(MIN_ORDER_SIZE) << order);
             MallocMetadata* buddy = reinterpret_cast<MallocMetadata*>(buddy_addr);
             remove_from_free_list(buddy, order);
             if (buddy < curr) {
@@ -347,7 +353,7 @@ void* srealloc(void* oldp, size_t size)
         curr->is_free = false;
         //moving data if needed
         if (curr != oldMetadata) {
-            std::memmove(static_cast<void*>(curr + 1), oldp, (128 << old_order) - sizeof(MallocMetadata));
+            std::memmove(static_cast<void*>(curr + 1), oldp, (static_cast<size_t>(MIN_ORDER_SIZE) << old_order) - sizeof(MallocMetadata));
         }
         //spliting if too big
         split_allocated_block(curr, order, target_order);
@@ -358,7 +364,7 @@ void* srealloc(void* oldp, size_t size)
     if (newPtr == nullptr) {
         return nullptr;
     }
-    std::memcpy(newPtr, oldp, oldMetadata->size - sizeof(MallocMetadata));
+    std::memmove(newPtr, oldp, oldMetadata->size - sizeof(MallocMetadata));
     sfree(oldp);
     return newPtr;
 }

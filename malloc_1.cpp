@@ -1,4 +1,5 @@
-#include "os_malloc.h"
+#include <unistd.h>
+#include <cstddef>
 
 void* smalloc(size_t size) {
     size_t MAX_MALLOC = 100000000; 
