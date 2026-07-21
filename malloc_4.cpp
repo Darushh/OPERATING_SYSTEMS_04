@@ -255,7 +255,7 @@ static void remove_from_mmap_list(MallocMetadata* block)
 static void* allocate_mmap_block(size_t requested_size, bool use_hugepage)
 {
     const size_t total_size = requested_size + sizeof(MallocMetadata);
-    const size_t mapping_size =
+    size_t mapping_size =
         use_hugepage ? round_up_to_huge_page(total_size) : total_size;
 
     int flags = MAP_PRIVATE | MAP_ANONYMOUS;
@@ -270,6 +270,20 @@ static void* allocate_mmap_block(size_t requested_size, bool use_hugepage)
                              flags,
                              -1,
                              0);
+
+    if (raw_address == MAP_FAILED && use_hugepage) {
+        // No huge pages reserved on this machine: fall back to a normal mapping
+        // instead of failing the allocation outright.
+        use_hugepage = false;
+        mapping_size = total_size;
+        raw_address = mmap(nullptr,
+                           mapping_size,
+                           PROT_READ | PROT_WRITE,
+                           MAP_PRIVATE | MAP_ANONYMOUS,
+                           -1,
+                           0);
+    }
+
     if (raw_address == MAP_FAILED) {
         return nullptr;
     }

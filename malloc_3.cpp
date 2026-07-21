@@ -192,16 +192,17 @@ void* smalloc(size_t size)
         is_initialized = true;
     }
     size_t aligned_size = align_8(size);
-    size_t total_size = aligned_size + sizeof(MallocMetadata);
-    
-    if (total_size > MMAP_THRESHOLD) {
+    //mmap threshold check uses the raw requested size, per spec ("size + _size_meta_data() > 128KB")
+    size_t raw_total_size = size + sizeof(MallocMetadata);
+
+    if (raw_total_size > MMAP_THRESHOLD) {
         //memory from OS:
-        void* raw_address = mmap(NULL, total_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+        void* raw_address = mmap(NULL, raw_total_size, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
         if (raw_address == MAP_FAILED) {
             return nullptr;
         }
         MallocMetadata* block = static_cast<MallocMetadata*>(raw_address);
-        block->size = aligned_size; 
+        block->size = size; //store the raw requested size, not the 8-byte-aligned one
         block->is_free = false;
         block->is_mmaped = true;
         //inserting to mmap block list
@@ -213,6 +214,7 @@ void* smalloc(size_t size)
         mmap_head = block;
         return static_cast<void*>(block + 1);
     }
+    size_t total_size = aligned_size + sizeof(MallocMetadata);
     int target_order = get_order(total_size);
     int found_order = -1;
     for (int o = target_order; o <= 10; ++o) {
@@ -295,26 +297,26 @@ void* srealloc(void* oldp, size_t size)
     size_t total_size = aligned_size + sizeof(MallocMetadata);
     //handle mmap
     if (oldMetadata->is_mmaped) {
-        if (aligned_size == oldMetadata->size) {
+        if (size == oldMetadata->size) {
             return oldp;
         }
         void* newPtr = smalloc(size);
         if (newPtr == nullptr) {
             return nullptr;
         }
-        size_t copy_size = oldMetadata->size < aligned_size ? oldMetadata->size : aligned_size;
+        size_t copy_size = oldMetadata->size < size ? oldMetadata->size : size;
         std::memmove(newPtr, oldp, copy_size);
         sfree(oldp);
         return newPtr;
     }
     //handle buddies:
-    int target_order = get_order(total_size);
-    int old_order = get_order(oldMetadata->size);
-    //block is big enough
-    if (old_order >= target_order) {
-        split_allocated_block(oldMetadata, old_order, target_order);
+    //(a) reuse the current block as-is when it already fits - no splitting/merging
+    size_t old_usable_size = oldMetadata->size - sizeof(MallocMetadata);
+    if (size <= old_usable_size) {
         return oldp;
     }
+    int target_order = get_order(total_size);
+    int old_order = get_order(oldMetadata->size);
     //maybe merging
     int order = old_order;
     MallocMetadata* curr = oldMetadata;
